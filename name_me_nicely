@@ -1,0 +1,63 @@
+#!/bin/bash
+
+
+	  #************************************************#
+	  #     	    name_me_nicely                 #
+	  #     	written by JB Braendel             #
+	  #     	  November 13, 2012                #
+          #                                                #
+	  #   Recognize similar files and write them to    #
+	  #          a similar naming convention           #
+	  #************************************************#
+
+
+
+# Funky naming conventions
+#
+# Big Bang Theory,
+#
+# The.Big.Bang.Theory.S06E01.HDTV.x264-LOL.mp4
+# The Big Bang Theory - 101 The Pilot Equation.avi
+# 05x18 - The Werewolf Transformation (HDTV.XVID-PHATE).avi
+# S05E21 HD.mp4
+# 
+# given that a current directory lists all files of the SAME 
+# product (Big Bang Theory), then we can name simply by looking
+# for season/episode number (and possibly title)
+#
+#
+# Comics,
+#
+# All_Star_West_008__2012___Digital___Nahga_Empire_.cbr
+# Green Lantern - New Guardians 08 (2012) (c2c) (The Last kryptonian-DCP).cbr
+# SUPERMAN 8.cbr
+# Batman 008 (2012) (3 covers) (RiZZ3N-Empire).cbr
+# 51.Voodoo #07 (digital Empire).cbr
+#
+# each file must contain the name somewhere near the beginning, with
+# the exception of a prefix (eg. '51.'); allow some search to 
+# only accept files with a given title in it (spaces allowed: [ _\t]*)
+# then search for the issue number: <#x*> <0x*>
+#
+#
+# NOTE
+# 
+# For backup measures, a git repo should automatically be created,
+# and/or commited each time for all files
+#
+#
+#
+# Usage
+#
+# ./name_me_nicely [-static n format|-dynamic file] -ext [possible extensions]
+#
+# static
+#   use within a folder where you know all the files are related
+#   to each other
+#   n - the number of args we're trying to grab (2 for comic issues, 3 for tv shows)
+#   example of formats,
+#   	"The Big Bang Theory - S**1**E**2** - **3**"
+
+
+# ------------------------------ #
+# name

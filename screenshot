@@ -1,0 +1,17 @@
+#!/bin/bash
+
+  #******************************************# 
+  #                                          # 
+  #		   screenshot              #
+  #	      written by JB Braendel         #
+  #		January 06, 2013            #
+  #                                          #
+  #	       Simple desktop Screenshot
+  #******************************************# 
+
+cwd="/home/jbud/Pictures/"
+name="$cwd$(date +%Y-%m-%d-%k-%m-%S-%N)"
+
+xwd -root -out $name.xwd && convert $name.xwd $name.png
+rm $name.xwd
+echo $name
