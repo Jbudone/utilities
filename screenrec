@@ -1,0 +1,216 @@
+#!/bin/bash
+
+
+###################
+##
+## Screenrecord
+## Author: JB Braendel (jbudone)
+## Website: jbud.me
+## Date: Jan, 26. 2013
+## 
+## a simple screen recording script to automate the tasks
+## fitted best to my needs
+##
+## Required Libs
+##   avconv (compiled with libx264)
+##   avconv presets
+##   mkvtoolnix
+##   libnotify
+##
+############################################
+############################################
+
+# TODO: (list of things probably never to be done)
+#   - implement xrectsel for region recording
+#		Note: this must have a region divisible by 2, and downsampling
+#			must also be divisible by 2
+#	- come up with a good bitrate formula for any resolution
+#	- get show_region option to work properly
+#	- use a better notification service than libnotify
+
+
+##################
+## OPTIONS
+##################
+
+my_res="`xwininfo -root | awk '{ if ($1 == "-geometry") print $2 }' | sed 's/\+.*//g'`"
+
+# Streaming Defaults
+############
+opt_method="start"						# method:	  which method to run screenrec (start, pause, stop)
+opt_format="-f x11grab"					# format:	  x11grab streams from x11 (desktop/screen)
+opt_res="-s ${my_res}"					# resolution: resolution of screen (for fullscreen); MUST be divisible by 2!
+opt_rate="-r 25" 						# framerate:  framerate of stream
+opt_bitrate="-b 4000k"					# bitrate:	  bitrate of stream (4000k seems good for 1440x900)
+opt_codec="-c:v libx264" 				# codec: 	  which codec to stream to
+opt_preset="-pre:v libx264-veryfast"	# preset:	  preset options in avconv for streaming details
+opt_downsample="-s 960x600"				# downsample: stream output to this resolution
+
+
+# Setting Defaults
+###############
+def_cwd="/home/`whoami`/Videos/" 		# cwd:		  where videos are stored
+def_waittimer=60 						# waittimer:  videos are streamed for this many seconds max, then
+										#				another one is created and merged with the original.
+										#				This is used for scenarios in which you're recording
+										#				and worried that your computer may crash
+def_stopwait=5  						# stopwait:   wait timer for the final recording to finish compressing,
+										#				before merging all the videos together
+def_notifytimer="-t 800"				# notifyexp:  NOTE: DOES NOT WORK
+										#				I've added this here in hopes that someday libnotify 
+										#				will fix their expiration timer on notifications, but
+										#				until then this will simply do nothing :(
+
+
+# Getargs arguments
+################
+
+# -m method (start/resume, pause, stop)
+# 			NOTE: pause followed by another pause will stop
+# -p preset
+# -r framerate
+while getopts "p:m:r:" opt; do
+	case $opt in
+		m)
+			case "$OPTARG" in
+				start | resume )
+					opt_method="start"
+					;;
+				pause )
+					opt_method="pause"
+					;;
+				stop )
+					opt_method="stop"
+					;;
+			esac
+			;;
+		p)
+			opt_preset="-pre:v $opt"
+			;;
+		r)
+			opt_rate="-r $opt"
+			;;
+	esac
+done
+
+
+
+
+#################
+## EXISTING SESSION
+#################
+
+
+# Check existing Process
+##############
+myname="`echo $0 | sed 's/.*\///'`" 			# what is this file called now?
+mysearch="^.* /bin/bash.*$myname\(\s\+.*\)*$"	# grep regex search
+joblist="`ps aux`"								# list of processes
+pidlist="`echo -e "${joblist}" | grep -e "$mysearch" | awk '// {print $2}' | xargs`"
+for pid in $pidlist
+do
+	# Is this process different than this current one?
+	if [ "$pid" -ne "$$" ]
+	then
+		# found existing screenrecording session
+		case "$opt_method" in
+			start )  # RESUME paused session
+				kill -14 $pid
+				exit 1
+				;;
+			pause ) # PAUSE session OR STOP if already paused
+				kill -1 $pid
+				exit 1
+				;;
+			stop )  # STOP session
+				kill -2 $pid
+				exit 1
+				;;
+		esac
+		exit 1
+	fi
+done
+
+# derp, no session to pause/stop
+case "$opt_method" in
+	pause | stop )
+		exit 1
+		;;
+esac
+
+notify-send 'Screen Recorder' 'Screen recording has begun!' $def_notifytimer --icon=dialog-information
+
+
+##################
+## STREAM HANDLING
+##################
+
+start_session() {
+	name="$def_cwd$(date +%Y-%m-%d-%H-%M-%S-%N).avi"
+
+	# avconv stream:
+	#	verbosity: OFF
+	#	desktop: screen 0
+	(avconv $opt_format -loglevel quiet $opt_res $opt_rate -qp 0 $opt_bitrate -i :0.0 $opt_codec $opt_preset $opt_downsample -y $name)&
+	files=( "${files[@]}" "$name" )
+
+	return $! # jobid of avconv
+}
+
+stop_session() {
+
+	# MERGE recordings
+	name="$def_cwd$(date +%Y-%m-%d-%H-%M-%S-%N).avi"
+	mkvmerge -o ${name}.avi `echo "${files[@]}" | xargs | sed 's/ / + /g'`
+	rm `echo "${files[@]}" | xargs`
+	notify-send 'Screen Recorder' 'Screen recording has halted' $def_notifytimer --icon=dialog-information
+	exit 1
+}
+
+pause_session() {
+	kill -2 $jobid
+}
+
+resume_session() {
+	start_session
+	paused=false
+	jobid=$!
+}
+
+wait_session() {
+	i="$def_waittimer"
+	while true; do
+		sleep 1s
+		let i-=1
+		if [ $i -lt 0 ]; then
+			break
+		fi
+	done
+}
+
+declare -a files # the list of files made (to be joined in the end)
+paused=false
+start_session
+jobid=$!
+
+# Trapping done here
+# This is where the cross-process communication is handled
+trap 'kill -2 $jobid; sleep $def_stopwait; stop_session' SIGINT  # STOP
+trap 'if $paused; then echo "paused kill"; stop_session; else echo "pausing"; paused=true; pause_session; fi' SIGHUP  # PAUSE
+trap 'if $paused; then paused=false; echo "resuming"; resume_session; fi'    SIGALRM # RESUME
+
+############
+## LOOP
+############
+
+while true; do
+	# the screen recorder is automatically paused/resumed
+	# after each wait session in order to backup the 
+	# currect recording (in case of crashes)
+	wait_session
+	if ! $paused; then
+		echo "pausing/resuming recording.."
+		pause_session
+		resume_session
+	fi
+done
