@@ -75,6 +75,7 @@ obviously these are best set as hotkeys, so here's my setup
 	JB's Screenshot (burst)			  :: /home/jbud/utilities/screenshot -m burst
 	JB's Screenshot					  :: /home/jbud/utilities/screenshot
 	JB's Screenrecord (start/resume)  :: /home/jbud/utilities/screenrec
+	JB's Screenrecord (region select) :: /home/jbud/utilities/screenrec -w
 	JB's Screenrecord (pause/stop)    :: /home/jbud/utilities/screenrec -m pause
 ````````````````````````
 
