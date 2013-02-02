@@ -17,13 +17,13 @@
 ##   mkvtoolnix
 ##   libnotify
 ##
+## Uses
+##	 xrectsel (works with X11)
+##
 ############################################
 ############################################
 
 # TODO: (list of things probably never to be done)
-#   - implement xrectsel for region recording
-#		Note: this must have a region divisible by 2, and downsampling
-#			must also be divisible by 2
 #	- come up with a good bitrate formula for any resolution
 #	- get show_region option to work properly
 #	- use a better notification service than libnotify
@@ -45,6 +45,7 @@ opt_bitrate="-b 4000k"					# bitrate:	  bitrate of stream (4000k seems good for 
 opt_codec="-c:v libx264" 				# codec: 	  which codec to stream to
 opt_preset="-pre:v libx264-veryfast"	# preset:	  preset options in avconv for streaming details
 opt_downsample="-s 960x600"				# downsample: stream output to this resolution
+opt_offset=""							# offset:	  offset of recording
 
 
 # Setting Defaults
@@ -61,6 +62,13 @@ def_notifytimer="-t 800"				# notifyexp:  NOTE: DOES NOT WORK
 										#				will fix their expiration timer on notifications, but
 										#				until then this will simply do nothing :(
 
+round_num() {
+	if [ $(($1 % 2)) -eq 0 ]; then
+		echo "$1"
+	else
+		echo "$(($1 - 1))"
+	fi
+}
 
 # Getargs arguments
 ################
@@ -69,7 +77,8 @@ def_notifytimer="-t 800"				# notifyexp:  NOTE: DOES NOT WORK
 # 			NOTE: pause followed by another pause will stop
 # -p preset
 # -r framerate
-while getopts "p:m:r:" opt; do
+# -w region-selection
+while getopts "p:m:r:w" opt; do
 	case $opt in
 		m)
 			case "$OPTARG" in
@@ -89,6 +98,29 @@ while getopts "p:m:r:" opt; do
 			;;
 		r)
 			opt_rate="-r $opt"
+			;;
+		w)
+			my_path="`dirname $0`"
+			region_info="`${my_path}/xrectsel`"
+			my_res_x="`echo "${region_info}" | sed 's/x.*//g'`"
+			my_res_y="`echo "${region_info}" | sed 's/.*x\([0-9]*\)+.*$/\1/'`"
+			opt_offset_x="`echo "${region_info}" | sed 's/.*+\([0-9]*\)+.*$/\1/'`"
+			opt_offset_y="`echo "${region_info}" | sed 's/.*+\([0-9]*\)$/\1/'`"
+			my_res_x=$(round_num $my_res_x)
+			my_res_y=$(round_num $my_res_y)
+			opt_offset_x=$(round_num $opt_offset_x)
+			opt_offset_y=$(round_num $opt_offset_y)
+			echo "my_res: ${my_res}"
+			echo "my_res-x: ${my_res_x}"
+			echo "my_res-y: ${my_res_y}"
+			echo "my_off: ${opt_offset}"
+			echo "my_off-x: ${opt_offset_x}"
+			echo "my_off-y: ${opt_offset_y}"
+			opt_res="-s ${my_res_x}x${my_res_y}"
+			opt_offset="+${opt_offset_x},${opt_offset_y}"
+			echo "my_res: ${my_res}"
+			echo "my_off: ${opt_offset}"
+			opt_downsample=""
 			;;
 	esac
 done
@@ -151,7 +183,8 @@ start_session() {
 	# avconv stream:
 	#	verbosity: OFF
 	#	desktop: screen 0
-	(avconv $opt_format -loglevel quiet $opt_res $opt_rate -qp 0 $opt_bitrate -i :0.0 $opt_codec $opt_preset $opt_downsample -y $name)&
+	# (avconv $opt_format -loglevel quiet $opt_res $opt_rate -qp 0 $opt_bitrate -i :0.0${opt_offset} $opt_codec $opt_preset $opt_downsample -y $name)&
+	(avconv $opt_format $opt_res $opt_rate -qp 0 $opt_bitrate -i :0.0${opt_offset} $opt_codec $opt_preset $opt_downsample -y $name)&
 	files=( "${files[@]}" "$name" )
 
 	return $! # jobid of avconv
