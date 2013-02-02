@@ -29,6 +29,7 @@ screen recording utility. usage:
 	# -p [preset]   presets found in /usr/share/avconv
 	# -r [framerate]
 	# -m pause		pausing twice will stop the script
+	# -w 			region-select (record a selected region)
 `````````````````````````
 
 Backup explained:
@@ -91,3 +92,9 @@ Snapshot used on a weekly basis,
 	0 14 * * 1 /home/jbud/utilities/snapshot_dir /media/LaCie_/FatDrive/Movies/ > /home/jbud/vault/snapshots/movies
 ````````````````````````
 
+
+Donations
+==============
+
+Donations are always greatly appreciated. Feel free to Paypal me at Jbud@live.ca
+..or not, that's cool too
