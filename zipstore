@@ -1,0 +1,258 @@
+#!/bin/bash
+
+
+
+###################
+##
+## Zipstore
+## Author: JB Braendel (jbudone)
+## Website: jbud.me
+## Date: Jun, 15 2013
+## 
+## Zip-based storage
+##
+## Required Libs
+##   TODO
+##
+############################################
+############################################
+
+#########
+# TODO   (list of wishful features)
+####
+# 
+# > max increments in zip not returning properly (bug)
+# > increment zip files
+#
+######
+
+
+#####################################
+####   Load Args    #####
+
+# file(s) (multiple possibly pre-zipped)
+# max file backups
+# max zip backups
+# name of files  -f [name:newname]
+
+
+
+##################
+## OPTIONS
+##################
+
+# Settings
+############
+
+opt_maxfile=10
+opt_maxzip=0
+opt_zipname="/home/`whoami`/backup.zip"
+
+
+
+# Getargs arguments
+################
+
+# -f max files (eg.  file.5.bak)
+# -z max zips (eg. backup.5.bak)
+# -o zip name
+until [ -z $1 ] ; do
+	arg="$1"
+	case "$opt" in
+		-f|--maxfile)
+			shift
+			opt_maxfile="$1"
+			;;
+		-z|--maxzip)
+			echo "SORRY! No maxzip feature has been implemented yet.."
+			shift
+			# opt_maxzip="$1"
+			;;
+		-o|--output)
+			shift
+			fileplace="$1"
+			;;
+		*)
+			# if $1 ends in / then remove the /
+			if [ "${1:$((${#1}-1))}" == "/" ]; then
+				files+=("`echo ${1:0:$((${#1}-1))}`")
+			else
+				files+=("$1")
+			fi
+			;;
+	esac
+	shift
+done
+
+# min 1 file
+if [ "${#files[@]}" -eq "0" ] ; then
+	echo "no files listed for backup"
+	exit
+fi
+
+
+
+# get_zip_num
+#	@zipname
+# NOTE: retrieves the number of the given zip backup
+# get_zip_num () {
+# 	# TODO
+# }
+
+# increment_zip
+#	@zipname
+# NOTE: in case prev. zip file exists, increment that one
+# NOTE: if nextzip >= maxzip, simply remove
+# NOTE: if doesn't exist, then ignore
+# increment_zip() {
+# 	# TODO 
+# }
+
+
+
+get_file_without_path() {
+	file="$1"
+	echo `basename $file`
+}
+
+get_file_basename() {
+	# get the basename "xxxxxxxx.ext", echo out
+	file="$1"
+	filebase=`basename $file |  sed -r 's/(.*)(\.\w*)$/\1/'`
+	echo "$filebase"
+}
+
+get_file_ext() {
+	# get the file ext "xxxxxxxxx.ext", echo out
+	file="$1"
+	fileext=`basename $file |  sed -r 's/(.*)(\.\w*)$/\2/'`
+	filebase=`basename $file | sed -r 's/(.*)(\.\w*)$/\1/'`
+
+	if [ "$filebase" == "$fileext" ] ; then
+		echo ""
+		return
+	fi
+	echo "$fileext"
+}
+
+
+
+
+
+# unzip all files to temporary directory
+tmpdir=`mktemp -d`
+cwd=`pwd`
+cd "$tmpdir"
+
+if [ -e "$opt_zipname" ] ; then
+	unzip "$opt_zipname" -d "$tmpdir"
+fi
+
+# increment backup number of each file being backed up
+#  @filename
+#  @level
+increment_file() {
+	# get basefile, number, bakext
+	file="$1"
+	filename=`get_file_without_path $file`
+	shift
+	level="$1"
+	filebase=`get_file_basename $filename`
+	fileext=`get_file_ext $filename`
+
+	filenum=".$level"
+	filecur="$filebase$filenum$fileext"
+	((level+=1))
+	filenum=".$level"
+	filenew="$filebase$filenum$fileext"
+
+	if [ ! -e "$filecur" ] ; then
+		echo "1"
+		return 1
+	fi
+
+	# have we hit the maximum file increment?
+	if [ $level -eq $opt_maxfile ] ; then
+		if [ $opt_maxzip -eq 0 ] ; then
+			rm "$filecur"
+			echo "1"
+			return 1
+		fi
+		echo "0"
+		return 1
+	fi
+
+
+	# test if collision file exists; if so then increment that one before ours
+	hit_max=0
+	if [ -e "$filenew" ] ; then
+		# TODO can do without export increment_file ?
+		hit_max=`increment_file $file $level`
+	fi
+	# echo "mv $filecur $filenew"
+	mv "$filecur" "$filenew"
+	echo "$hit_max"
+	return 1
+}
+
+max_increments=false
+if [ -e "$opt_zipname" ] ; then
+	export increment_file
+	for file in "${files[@]}" ; do
+		incremented=0
+		echo "incrementing $file"
+		incremented=`increment_file $file 0`
+		if [[ $incremented == 0 ]] ; then
+			echo "maximum increment of $file"
+			# TODO: bug, why is this showing up?
+			# max_increments=true
+		fi
+	done
+fi
+
+# 3) increment previous zips; returns 0 for 
+if $max_increments ; then
+	# TODO  increment zip
+
+
+	# rm files within tmpdir
+	rm -r "$tmpdir/*"
+
+	# cp files to tmpdir (.0.ext)
+	export get_file_basename
+	export get_file_ext
+	for file in "${files[@]}" ; do
+		file=`get_file_without_path $file`
+		filebase=`get_file_basename $file`
+		fileext=`get_file_ext $file`
+		level=".0"
+
+		cp "$file" "$tmpdir/$filebase$level$fileext"
+	done
+else
+	# cp files to tmpdir (.0.ext)
+	export get_file_basename
+	export get_file_ext
+	for file in "${files[@]}" ; do
+		filename=`get_file_without_path $file`
+		filebase=`get_file_basename $filename`
+		fileext=`get_file_ext $filename`
+		level=".0"
+
+		echo "copying $file to $tmpdir/$filebase$level$fileext"
+		cp "$file" "$tmpdir/$filebase$level$fileext"
+	done
+
+	# rm zip
+	if [ -e "$opt_zipname" ] ; then
+		rm "$opt_zipname"
+	fi
+fi
+
+
+# create empty zip w/ all files in tmpdir
+zip -r "$opt_zipname" .
+cd "$cwd"
+
+# rm tmpdir
+# rm -r "$tmpdir"
