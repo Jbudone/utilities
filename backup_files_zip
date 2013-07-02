@@ -1,0 +1,65 @@
+#!/bin/bash
+
+
+
+###################
+##
+## Backup
+## Author: JB Braendel (jbudone)
+## Website: jbud.me
+## Date: Jun, 16 2013
+## 
+## Backup storage util. This is a personal script
+## and should be edited to your specific backup
+## needs
+##
+## Required Libs
+##   zipstore
+##
+############################################
+############################################
+
+
+# TODO
+#   > add more things to be backed up :)
+
+
+zipstore_loc="/home/`whoami`/jdrive/jstuff/work/personal/utilities/zipstore"
+
+backup_group() {
+	bak_cwd=$1 ; shift
+	bak_zip=$1 ; shift
+
+	declare -a bak_files=()
+
+	until [ -z $1 ] ; do
+		bak_files+=("$1")
+		shift
+	done
+
+	echo "Backing up $bak_zip"
+	result=`$zipstore_loc -o $bak_cwd$bak_zip ${bak_files[@]}`
+}
+export backup_group
+
+
+## local app profiles
+bak_localapp_cwd="/home/`whoami`/jdrive/jstuff/vault/backups/"
+bak_localapp_zip="local_app_profiles.zip"
+declare -a bak_localapp_files=(
+	/home/jbud/.purple
+	/home/jbud/.config/banshee-1/banshee.db
+)
+
+backup_group "$bak_localapp_cwd" "$bak_localapp_zip" "${bak_localapp_files[@]}"
+
+
+## vim stuff
+bak_vim_cwd="/home/`whoami`/jdrive/jstuff/vault/backups/"
+bak_vim_zip="local_vim_profile.zip"
+declare -a bak_vim_files=(
+	/home/jbud/.vim
+	/home/jbud/.vimrc
+)
+
+backup_group "$bak_vim_cwd" "$bak_vim_zip" "${bak_vim_files[@]}"

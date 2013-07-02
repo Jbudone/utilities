@@ -44,7 +44,7 @@
 # Settings
 ############
 
-opt_maxfile=10
+opt_maxfile=4
 opt_maxzip=0
 opt_zipname="/home/`whoami`/backup.zip"
 
@@ -58,7 +58,7 @@ opt_zipname="/home/`whoami`/backup.zip"
 # -o zip name
 until [ -z $1 ] ; do
 	arg="$1"
-	case "$opt" in
+	case "$arg" in
 		-f|--maxfile)
 			shift
 			opt_maxfile="$1"
@@ -70,7 +70,7 @@ until [ -z $1 ] ; do
 			;;
 		-o|--output)
 			shift
-			fileplace="$1"
+			opt_zipname="$1"
 			;;
 		*)
 			# if $1 ends in / then remove the /
@@ -119,6 +119,9 @@ get_file_basename() {
 	# get the basename "xxxxxxxx.ext", echo out
 	file="$1"
 	filebase=`basename $file |  sed -r 's/(.*)(\.\w*)$/\1/'`
+	if [ -z "$filebase" ] ; then
+		echo `basename $file`
+	fi
 	echo "$filebase"
 }
 
@@ -126,7 +129,7 @@ get_file_ext() {
 	# get the file ext "xxxxxxxxx.ext", echo out
 	file="$1"
 	fileext=`basename $file |  sed -r 's/(.*)(\.\w*)$/\2/'`
-	filebase=`basename $file | sed -r 's/(.*)(\.\w*)$/\1/'`
+	filebase=`basename $file`
 
 	if [ "$filebase" == "$fileext" ] ; then
 		echo ""
@@ -227,7 +230,7 @@ if $max_increments ; then
 		fileext=`get_file_ext $file`
 		level=".0"
 
-		cp "$file" "$tmpdir/$filebase$level$fileext"
+		cp -r "$file" "$tmpdir/$filebase$level$fileext"
 	done
 else
 	# cp files to tmpdir (.0.ext)
@@ -240,7 +243,7 @@ else
 		level=".0"
 
 		echo "copying $file to $tmpdir/$filebase$level$fileext"
-		cp "$file" "$tmpdir/$filebase$level$fileext"
+		cp -r "$file" "$tmpdir/$filebase$level$fileext"
 	done
 
 	# rm zip
