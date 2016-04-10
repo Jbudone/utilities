@@ -31,6 +31,9 @@
 #   > add option for l4z
 #	> colour coding / bolding output
 #	> safety checking: on error for anything, don't proceed
+#	
+#	> box options stored in db (eg. l4z + args)
+#	> on update - specify what has changed (added/removed/updated which files)
 
 ##################
 ## OPTIONS
@@ -53,6 +56,7 @@ while getopts "a:o:c:x" opt; do
 		o) opt_method="open"; box_name="$OPTARG" ;;
 		c) opt_method="close"; box_name="$OPTARG" ;;
 		x) extract=1; echo "ALSO EXTRACT PLEASE" ;;
+		*) echo "Unknown option $opt" ;;
 	esac
 done
 
@@ -66,13 +70,13 @@ bold=$(tput bold)
 normal=$(tput sgr0)
 
 create_folder_if_not_exists() {
-	if [ ! -d $FOLDER ]; then
+	if [[ ! -d $FOLDER ]]; then
 		mkdir $FOLDER
 	fi
 }
 
 create_db_if_not_exists() {
-	if [ ! -f $DB ]; then
+	if [[ ! -f $DB ]]; then
 		sqlite3 $DB "CREATE TABLE boxes (name TEXT PRIMARY KEY NOT NULL, file TEXT UNIQUE NOT NULL, md5 TEXT NOT NULL);"
 	fi
 }
@@ -125,10 +129,10 @@ close_box() {
 		# Is the passphrase correct?
 		tmpfile=$( mktemp )
 		gpg --output "$tmpfile" --passphrase "$passphrase" --yes "$file"
-		if [ $? -eq 0 ]; then
+		if [[ $? -eq 0 ]]; then
 			rm $tmpfile
 
-			if [ $extract -eq 1 ]; then
+			if [[ $extract -eq 1 ]]; then
 				tar -C "$HOME/$rawfile" -cf "$HOME/$rawfile.tar" .
 				rm -r "$HOME/$rawfile"
 				rawfile="$rawfile.tar"
@@ -154,29 +158,47 @@ case $opt_method in
 		# Open box to find its md5
 		rawfile=$( basename "$file" .gpg )
 		gpg --output "$HOME/$rawfile" "$file"
-
-		if [ ! $? -eq 0 ]; then
+		if [[ ! $? -eq 0 ]]; then
 			echo "Error"
 			exit 1
 		fi
 
 		md5=$( rec_md5r "$HOME/$rawfile" ) #$( md5sum "$HOME/$rawfile" | awk '{ printf "%s", $1 }' )
 		rm "$HOME/$rawfile"
+
+		# Insert box into db
 		sqlite3 $DB "INSERT INTO boxes (name,file,md5) values ('$box_name','$file','$md5');"
+		if [[ ! $? -eq 0 ]]; then
+			echo "Error inserting box"
+			exit
+		fi
 		;;
 	open )
+
+		# Fetch box from db
 		output=$( sqlite3 $DB "SELECT file, md5 FROM boxes WHERE name='$box_name';" )
+		if [[ ! $? -eq 0 ]]; then
+			echo "Error selecting boxes for opening"
+			exit
+		elif [[ -z $output ]]; then
+			echo "Box $box_name was not found"
+			exit
+		fi
+
+		# Find file/md5 params for box
 		file=$( echo "$output" | awk 'BEGIN { FS="|" }; { printf "%s", $1 }' )
 		md5=$( echo "$output" | awk 'BEGIN { FS="|" }; { printf "%s", $2 }' )
 		rawfile=$( basename "$file" .gpg )
 
+		# Open box
 		open_box $box_name "$file" $md5 $rawfile
-		if [ ! $? -eq 0 ]; then
+		if [[ ! $? -eq 0 ]]; then
 			echo "Nope!"
 			exit 1
 		fi
 
-		if [ $extract -eq 1 ]; then
+		# Extraction
+		if [[ $extract -eq 1 ]]; then
 			mkdir "$HOME/$box_name"
 			tar xf "$HOME/$rawfile" --directory "$HOME/$box_name"
 			echo "Extracting $HOME/$rawfile to $HOME/$box_name"
@@ -190,7 +212,18 @@ case $opt_method in
 		close_box $box_name "$file" $md5 $rawfile
 		;;
 	close )
+
+		# Fetch box from db
 		output=$( sqlite3 $DB "SELECT file, md5 FROM boxes WHERE name='$box_name';" )
+		if [[ ! $? -eq 0 ]]; then
+			echo "Error selecting boxes for closing"
+			exit
+		elif [[ -z $output ]]; then
+			echo "Box $box_name was not found"
+			exit
+		fi
+
+		# Find file/md5 params for box
 		file=$( echo "$output" | awk 'BEGIN { FS="|" }; { printf "%s", $1 }' )
 		md5=$( echo "$output" | awk 'BEGIN { FS="|" }; { printf "%s", $2 }' )
 		rawfile=$( basename "$file" .gpg )
