@@ -1,0 +1,338 @@
+#!/bin/bash
+
+
+###################
+##
+## mediasync
+## Author: JB Braendel (jbudone)
+## Website: jbud.me
+## Date: May, 30 2022
+## 
+## Sync files against cloud storage
+##
+## Required Libs
+##   jq
+##
+############################################
+############################################
+
+# TODO
+# - Config file for quick run
+# - crontab to autorun; notify on warnings so that user knows to manually run and intervene
+# - .ignore list (not working)
+# - check safety on symbols in filenames
+
+# - S3: Create, rename or delete folders if necessary
+# - S3: Don't bother if local hash hasn't changed
+# - S3 confirm success before commiting to hash file
+# - Warn of corrupted file; either recover or allow to stomp over online file
+
+
+opt_local="/run/media/jbud/LaCie/FatDrive/media.sync"
+opt_cloud_mount="/home/jbud/s3"
+opt_cloud="${opt_cloud_mount}/media.sync"
+opt_simulate=false
+
+#until [ -z $1 ] ; do
+#	arg="$1"
+#	case "$arg" in
+#		-l|--local)
+#			shift
+#			opt_local="$1"
+#			;;
+#		-c|--cloud)
+#			shift
+#			opt_cloud="$1"
+#			;;
+#		-o|--output)
+#			shift
+#			opt_zipname="$1"
+#			;;
+#	esac
+#	shift
+#done
+
+#######################################################################
+assert ()                 #  If condition false,
+{                         #+ exit from script
+    #+ with appropriate error message.
+    E_PARAM_ERR=98
+    E_ASSERT_FAILED=99
+
+
+    if [ -z "$2" ]          #  Not enough parameters passed
+    then                    #+ to assert() function.
+        return $E_PARAM_ERR   #  No damage done.
+    fi
+
+    lineno=$2
+
+    if [ ! $1 ] 
+    then
+        echo "Assertion failed:  \"$1\""
+        echo "File \"$0\", line $lineno"    # Give name of file and line number.
+        exit $E_ASSERT_FAILED
+        # else
+        #   return
+        #   and continue executing the script.
+    fi  
+} # Insert a similar assert() function into a script you need to debug.    
+#######################################################################
+
+
+
+fileRelPath () {
+    assert "$# -eq 1" $LINENO
+    local fullPath="$1"
+    echo `realpath --relative-to="$opt_local" "$fullPath"`
+}
+
+fileLocalPath () {
+    assert "$# -eq 1" $LINENO
+    local file="$1"
+    echo "${opt_local}/$file"
+}
+
+fileCloudPath () {
+    assert "$# -eq 1" $LINENO
+    local file="$1"
+    echo "${opt_cloud}/$file"
+}
+
+
+# Read config file (could be there is none, if so assume init)
+hashFile="${opt_local}/mediasync.hash"
+if [ -f "$hashFile" ]; then
+    echo "$hashFile exists."
+else
+    echo "$hashFile does not exists."
+    touch "$hashFile"
+fi
+
+# LOCAL Files: Get all files and hash; build into jq map
+localMap="{}"
+while read -r file; do
+    relFile=$(fileRelPath "$file")
+    md5=`md5sum "$file" | awk '{print $1}'`
+    localMap=`echo "$localMap" | jq ". + {\"$md5\": \"$relFile\"}"`
+done <<< "$(find "$opt_local" -type f)"
+echo "$localMap" | jq '.'
+
+# Remove .ignore files from list
+localMap=`echo "$localMap" | jq "to_entries | map( {(.value|tostring) : .key } ) | add"` # flip key/val
+filterFile="$hashFile"
+localMap=`echo "$localMap" | jq "del(.\"$filterFile\")"` # remove file
+localMap=`echo "$localMap" | jq "to_entries | map( {(.value|tostring) : .key } ) | add"` # flip key/val back
+#localMap=`echo "$localMap" | jq "del(.data[] | select(.hash == "0M0fudEmzW9dmAsO3dcWT286tTL6wTX9sllXtsyz-0Q"))"` #     jq ". + {\"$md5\": \"$file\"}"`
+
+
+# SAVED Files: Read hashfile; build into jq map
+hashMap=`cat $hashFile | jq '. // empty'`
+if [ -z "$hashMap" ]; then
+    hashMap="{}"
+fi
+#hashMap="{}"
+#while read -r line; do
+#    if [ -z "$line" ]; then continue; fi
+#    md5=`echo "$line" | awk '{ print $1 }'`
+#    file=`echo "$line" | awk '{ print $2 }'`
+#    hashMap=`echo "$hashMap" | jq ". + {\"$md5\": \"$file\"}"`
+#done <<< "$(cat $hashFile)"
+#echo "$hashMap" | jq '.'
+
+# New files / changed
+# Find files that don't exist in hashMap
+newFiles="{}"
+movedFiles="{}"
+while read -r line; do
+    if [ -z "$line" ]; then continue; fi
+    key="$line"
+    file=`echo "$localMap" | jq ".[$key]"`
+    #echo "$key: $file"
+
+    # Find hash in hashMap
+    fileInHash=`echo "$hashMap" | jq ".[$key] // empty"`
+    if [ -z "$fileInHash" ]; then
+        #echo "NEW FILE: $file"
+        newFiles=`echo "$newFiles" | jq ". + {$key: $file}"`
+    else
+        # Confirm filename matches (moved? renamed?)
+        # Moved/Renamed? Add to movedFiles
+        if [ ! "$fileInHash" = "$file" ]; then
+            #echo "MOVED FILE: $file != $fileInHash"
+            movedFiles=`echo "$movedFiles" | jq ". + {$key: $file}"`
+        fi
+    fi
+done <<< "$(echo "$localMap" | jq 'keys[]')"
+
+
+# Deleted files
+# Find files that don't exist in hashMap
+removedFiles="{}"
+while read -r line; do
+    if [ -z "$line" ]; then continue; fi
+    key="$line"
+    file=`echo "$hashMap" | jq ".[$key]"`
+    #echo "$key: $file"
+
+    # Find hash in localMap
+    fileInLocal=`echo "$localMap" | jq ".[$key] // empty"`
+    if [ -z "$fileInLocal" ]; then
+        #echo "REMOVED FILE: $file"
+        removedFiles=`echo "$removedFiles" | jq ". + {$key: $file}"`
+    fi
+done <<< "$(echo "$hashMap" | jq 'keys[]')"
+
+
+# Corrupted files
+# check newFiles/removedFiles for matching values but differing hashes; these are corrupted files (warn user; remove from newFiles+removedFiles)
+corruptFiles="{}"
+newFilesLen=`echo "$newFiles" | jq "length"`
+remFilesLen=`echo "$removedFiles" | jq "length"`
+if [[ $newFilesLen -ne 0 && $remFilesLen -ne 0 ]]; then
+    newFiles=`echo "$newFiles" | jq "to_entries | map( {(.value|tostring) : .key } ) | add"` # flip key/val
+    removedFiles=`echo "$removedFiles" | jq "to_entries | map( {(.value|tostring) : .key } ) | add"` # flip key/val
+    newFilesCopy="$newFiles" # Read from cached newFiles since we're modifying newFiles iwhtin
+    # Loop through newFiles, and check for that same file in removedFiles
+    # If the same file is in both but differing hashes then there's corruption
+    while read -r line; do
+        if [ -z "$line" ]; then continue; fi
+        newFile="$line"
+        hashInRemoved=`echo "$removedFiles" | jq ".[$newFile] // empty"`
+        if [ -n "$hashInRemoved" ]; then
+            hashInLocal=`echo "$newFiles" | jq ".[$newFile] // empty"`
+            #echo "CORRUPTED FILE: $newFile -- $hashInLocal != $hashInRemoved"
+            corruptFiles=`echo "$corruptFiles" | jq ". + {$newFile: $hashInRemoved}"`
+            newFiles=`echo "$newFiles" | jq "del(.$newFile)"` # remove from new files list (its not new, just corrupted)
+            removedFiles=`echo "$removedFiles" | jq "del(.$newFile)"` # remove from removed files list (its not removed, just corrupted)
+
+            # early out if we have no more
+            remFilesLen=`echo "$removedFiles" | jq "length"`
+            if [[ $remFilesLen -eq 0 ]]; then
+                break
+            fi
+        fi
+    done <<< "$(echo "$newFilesCopy" | jq 'keys[]')"
+
+    newFilesLen=`echo "$newFiles" | jq "length"`
+    if [[ $newFilesLen -ne 0 ]]; then
+        newFiles=`echo "$newFiles" | jq "to_entries | map( {(.value|tostring) : .key } ) | add"` # flip key/val
+    fi
+
+    remFilesLen=`echo "$removedFiles" | jq "length"`
+    if [[ $remFilesLen -ne 0 ]]; then
+        removedFiles=`echo "$removedFiles" | jq "to_entries | map( {(.value|tostring) : .key } ) | add"` # flip key/val
+    fi
+
+    corFilesLen=`echo "$corruptFiles" | jq "length"`
+    if [[ $corFilesLen -ne 0 ]]; then
+        corruptFiles=`echo "$corruptFiles" | jq "to_entries | map( {(.value|tostring) : .key } ) | add"` # flip key/val
+    fi
+fi
+
+# Write out all changes: newFiles/movedFiles/removedFiles/corruptFiles
+newFilesLen=`echo "$newFiles" | jq "length"`
+if [[ $newFilesLen -ne 0 ]]; then
+    echo "New Files:"
+    echo "$newFiles"
+fi
+
+movFilesLen=`echo "$movedFiles" | jq "length"`
+if [[ $movFilesLen -ne 0 ]]; then
+    echo "Moved Files:"
+    echo "$movedFiles"
+fi
+
+remFilesLen=`echo "$removedFiles" | jq "length"`
+if [[ $remFilesLen -ne 0 ]]; then
+    echo "Removed Files:"
+    echo "$removedFiles"
+fi
+
+corFilesLen=`echo "$corruptFiles" | jq "length"`
+if [[ $corFilesLen -ne 0 ]]; then
+    echo "Corrupted Files:"
+    echo "$corruptFiles"
+fi
+
+
+#
+# S3 sync below
+#
+
+if [ "$opt_simulate" != true ]; then
+    fusermount -u "$opt_cloud_mount"
+    s3fs glitchy-backup "$opt_cloud_mount"
+fi
+
+# Add new files
+while read -r line; do
+    if [ -z "$line" ]; then continue; fi
+    key="$line"
+    file=`echo "$newFiles" | jq -r ".[\"$key\"]"`
+    #echo "Adding file: $file"
+    fileLocal=$(fileLocalPath "$file")
+    fileCloud=$(fileCloudPath "$file")
+    hashMap=`echo "$hashMap" | jq ". + {\"$key\": \"$file\"}"`
+    echo "cp \"$fileLocal\" \"$fileCloud\""
+    if [ "$opt_simulate" != true ]; then
+        cp "$fileLocal" "$fileCloud"
+    fi
+done <<< "$(echo "$newFiles" | jq -r 'keys[]')"
+
+# Update renamed/moved files
+while read -r line; do
+    if [ -z "$line" ]; then continue; fi
+    key="$line"
+    file=`echo "$movedFiles" | jq -r ".[\"$key\"]"`
+    oldFile=`echo "$hashMap" | jq -r ".[\"$key\"]"`
+    #echo "Moving file: $oldFile -> $file"
+    fileCloudOld=$(fileCloudPath "$oldFile")
+    fileCloudNew=$(fileCloudPath "$file")
+    hashMap=`echo "$hashMap" | jq ".\"$key\" = \"$file\""`
+    echo "mv \"$fileCloudOld\" \"$fileCloudNew\""
+    if [ "$opt_simulate" != true ]; then
+        mv "$fileCloudOld" "$fileCloudNew"
+    fi
+done <<< "$(echo "$movedFiles" | jq -r 'keys[]')"
+
+
+# Remove files
+while read -r line; do
+    if [ -z "$line" ]; then continue; fi
+    key="$line"
+    file=`echo "$removedFiles" | jq -r ".[\"$key\"]"`
+    #echo "Removing file: $file"
+    hashMap=`echo "$hashMap" | jq "del(.\"$key\")"`
+    fileCloud=$(fileCloudPath "$file")
+    echo "rm \"$fileCloud\""
+    if [ "$opt_simulate" != true ]; then
+        rm "$fileCloud"
+    fi
+done <<< "$(echo "$removedFiles" | jq -r 'keys[]')"
+
+
+if [ "$opt_simulate" != true ]; then
+    fusermount -u "$opt_cloud_mount"
+fi
+
+# FIXME: Display changes and ask [Y]es to apply changes
+
+
+# FIXME: Confirm synced successfully to s3; if so then write changes to hashMap
+
+# Write changes
+if [ "$opt_simulate" != true ]; then
+    echo "$hashMap" | jq '.' > $hashFile
+fi
+echo "Results:"
+echo "$hashMap"
+
+
+hashMapTemp="$(mktemp)"
+echo "$hashMapTemp"
+echo $hashMap | jq '.' > "$hashMapTemp"
+
+delta "$hashFile" "$hashMapTemp"
+
+rm $hashMapTemp
